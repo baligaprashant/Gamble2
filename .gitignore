@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.idea/
+.cursor/
+.DS_Store
+captures/
+assets/templates/user/
+assets/templates/user_v2/
+# personal photos used for tuning stay local
+data/Photo*.jpg
