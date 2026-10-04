@@ -143,3 +143,37 @@ def suggest_window_pos(region: Region, screen_width: int) -> tuple[int, int]:
     if right_room >= region.left:
         return (min(region.left + region.width + 10, max(0, screen_width - 200)), 40)
     return (0, 40)
+
+
+def screen_capture_allowed(request: bool = False) -> bool | None:
+    """macOS only: has this app been given Screen Recording permission?
+
+    Without it macOS silently hands back a picture of the bare desktop wallpaper
+    with every window (including the video) missing.  Returns None when the
+    answer cannot be determined (not macOS / old macOS)."""
+    import sys
+
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cg.CGPreflightScreenCaptureAccess.restype = ctypes.c_bool
+        ok = bool(cg.CGPreflightScreenCaptureAccess())
+        if not ok and request:
+            cg.CGRequestScreenCaptureAccess.restype = ctypes.c_bool
+            cg.CGRequestScreenCaptureAccess()
+        return ok
+    except (OSError, AttributeError):
+        return None
+
+
+PERMISSION_HELP = (
+    "macOS is not letting this app record the screen, so it only sees the desktop wallpaper "
+    "(no windows, no video).\n"
+    "Fix:\n"
+    "  1. System Settings > Privacy & Security > Screen & System Audio Recording\n"
+    "  2. Turn ON the app you run this from (Terminal, iTerm, Cursor or PyCharm)\n"
+    "  3. Quit that app completely (Cmd+Q) and reopen it, then run the command again."
+)

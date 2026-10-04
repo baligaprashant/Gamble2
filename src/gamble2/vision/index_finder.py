@@ -20,6 +20,7 @@ from gamble2.vision.classify import RANK_SIZE, SUIT_SIZE, _normalise, match_glyp
 from gamble2.vision.glyph_bank import GlyphBank
 
 _WORK_W = 1280
+_MAX_UPSCALE = 3.0
 
 
 @dataclass(frozen=True)
@@ -66,8 +67,16 @@ class IndexRead:
 
 def index_pairs(frame: np.ndarray) -> list[IndexPair]:
     h0, w0 = frame.shape[:2]
-    scale = min(1.0, _WORK_W / float(w0))
-    img = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else frame
+    scale = _WORK_W / float(w0)
+    if scale > 1.0:
+        # small frame (a screen region, a far-away camera): enlarge it so the
+        # tiny glyphs have enough pixels to be told apart
+        scale = min(scale, _MAX_UPSCALE)
+        img = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    elif scale < 1.0:
+        img = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    else:
+        img = frame
     out: list[IndexPair] = []
     # strict threshold for bold print, looser one for thin / washed-out strokes
     for frac in (0.62, 0.80):

@@ -7,7 +7,14 @@ import sys
 
 from gamble2.capture.camera import CameraCapture
 from gamble2.capture.demo import DemoCapture
-from gamble2.capture.screen import Region, ScreenCapture, select_region, suggest_window_pos
+from gamble2.capture.screen import (
+    PERMISSION_HELP,
+    Region,
+    ScreenCapture,
+    screen_capture_allowed,
+    select_region,
+    suggest_window_pos,
+)
 from gamble2.ui.overlay import OverlayApp
 from gamble2.vision.template import TemplateDetector
 
@@ -36,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="mss monitor index when --region is omitted",
     )
     p.add_argument(
+        "--ignore-permission-check",
+        action="store_true",
+        help="Skip the macOS Screen Recording permission check",
+    )
+    p.add_argument(
         "--demo",
         action="store_true",
         help="Open the overlay with two sample hole cards (no camera)",
@@ -60,6 +72,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
     else:
+        if not args.ignore_permission_check and screen_capture_allowed(request=True) is False:
+            print(PERMISSION_HELP, file=sys.stderr)
+            try:
+                import subprocess
+
+                subprocess.run(
+                    ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"],
+                    check=False,
+                )
+            except OSError:
+                pass
+            return 1
         if args.region and args.region.strip().lower() == "select":
             region = select_region(args.monitor)
             if region is None:
