@@ -7,6 +7,7 @@ import numpy as np
 
 from gamble2.vision.base import CardDetector, CardRole, DetectedCard
 from gamble2.vision.cards import Card
+from gamble2.vision.classify import suit_matches_tint
 from gamble2.vision.glyph_bank import GlyphBank, default_bank, save_user_glyph
 from gamble2.vision.index_finder import find_index_reads, index_pairs
 from gamble2.vision.locate import Candidate, iou
@@ -59,7 +60,7 @@ class TemplateDetector(CardDetector):
         colour, best match to what we know about its rank and suit)."""
         best = None
         for pair in index_pairs(frame):
-            if pair.glyphs.red != (card.suit in "hd"):
+            if not suit_matches_tint(pair.glyphs, card.suit):
                 continue
             rs = self.bank.match("rank", pair.glyphs.rank, card.rank)[1]
             ss = self.bank.match("suit", pair.glyphs.suit, card.suit)[1]

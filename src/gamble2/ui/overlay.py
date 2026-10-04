@@ -10,6 +10,7 @@ import numpy as np
 
 from gamble2.odds.enumerate import Equity
 from gamble2.state.hand import HandState
+from gamble2.state.layout import StableCards, split_rows
 from gamble2.state.lock import StableHero
 from gamble2.ui.panel import compose_view, draw_odds_panel
 from gamble2.vision.base import DetectedCard
@@ -33,7 +34,10 @@ class OverlayApp:
         detector: object | None = None,
         window_pos: tuple[int, int] | None = None,
         debug: bool = False,
+        layout_rows: bool = False,
     ) -> None:
+        self.layout_rows = layout_rows
+        self._board_lock = StableCards()
         self.window_pos = window_pos
         self.detector = detector  # optional: enables the debug view / teach mode
         self.read_frame = read_frame
@@ -100,6 +104,8 @@ class OverlayApp:
                 k = _scale(frame)
                 reads = getattr(self.detector, "last_reads", [])
                 for (x, y, w, h), card, conf in reads:
+                    if any(_overlap(d.bbox, (x, y, w, h)) for d in detections):
+                        continue  # already drawn in green
                     cv2.rectangle(frame, (x - 3, y - 3), (x + w + 3, y + h + 3), (0, 140, 255), max(1, int(k)))
                     cv2.putText(frame, f"{card.code} {conf:.2f}", (x + w + 6, y + int(18 * k)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6 * k, (0, 140, 255), max(1, int(2 * k)), cv2.LINE_AA)
@@ -213,7 +219,24 @@ class OverlayApp:
     def _maybe_apply_detections(self, dets: list[DetectedCard]) -> None:
         if self._prefer_manual or self._manual_mode:
             return
-        cards = [d.card for d in dets if d.confidence >= MIN_CONFIDENCE]
+        good = [d for d in dets if d.confidence >= MIN_CONFIDENCE]
+        cards = [d.card for d in good]
+        if self.layout_rows:
+            # screen / video: the 2-card row is the hole cards, the 3-5 card row the board
+            hole_row, board_row = split_rows(good)
+            if hole_row is not None:
+                cards = [d.card for d in hole_row]
+            elif board_row is not None:
+                cards = []  # only a board is visible: do not mistake it for a hand
+            board = self._board_lock.observe(
+                [(d.card, d.bbox[0]) for d in (board_row or [])]
+            )
+            if len(board) in (3, 4, 5) and {c.code for c in board} != {c.code for c in self.state.board}:
+                try:
+                    self.state.set_board(board)
+                    self._last_key = None
+                except ValueError:
+                    pass
         locked = self._hero_lock.observe(cards)
         if locked:
             if {c.code for c in locked} != {c.code for c in self.state.hero}:
@@ -393,6 +416,12 @@ class OverlayApp:
 
 
 _MAX_VIEW_H = 820
+
+
+def _overlap(a, b) -> bool:
+    ix = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    iy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return ix > 0 and iy > 0 and ix * iy > 0.5 * min(a[2] * a[3], b[2] * b[3])
 
 
 def _scale(frame: np.ndarray) -> float:

@@ -32,6 +32,8 @@ class IndexGlyphs:
     red: bool
     rank_box: tuple[int, int, int, int]
     suit_box: tuple[int, int, int, int]
+    #: ink colour family: "red", "black", or - for four-colour decks - "green" / "blue"
+    tint: str = ""
 
 
 def classify_warped(
@@ -54,28 +56,41 @@ def classify_warped(
     return best
 
 
+def _preferred_suits(g: IndexGlyphs) -> str:
+    tint = g.tint or ("red" if g.red else "black")
+    return {"red": "hd", "black": "cs", "green": "c", "blue": "d"}.get(tint, "cs")
+
+
+def suit_matches_tint(g: IndexGlyphs, suit: str) -> bool:
+    return suit in _preferred_suits(g)
+
+
 def match_glyphs(g: IndexGlyphs, bank: GlyphBank) -> tuple[Card, float] | None:
     rank, rscore, rsecond = bank.match("rank", g.rank, RANKS)
-    # Suit: colour is a strong hint, not a hard rule.  Camera white balance and
-    # dim light can make a red pip look black (or vice versa), so the shape gets
-    # a vote of its own and a colour disagreement only lowers the confidence.
-    red_s, red_score, _ = bank.match("suit", g.suit, "hd")
-    blk_s, blk_score, _ = bank.match("suit", g.suit, "cs")
-    bonus = 0.10
-    red_adj = red_score + (bonus if g.red else 0.0)
-    blk_adj = blk_score + (0.0 if g.red else bonus)
-    if red_s is not None and (blk_s is None or red_adj >= blk_adj):
-        suit, sscore, colour_ok = red_s, red_score, g.red
-    else:
-        suit, sscore, colour_ok = blk_s, blk_score, not g.red
-    if rank is None or suit is None:
+    # Suit: ink colour is a strong hint, not a hard rule.  Camera white balance
+    # and dim light can make a red pip look black (or vice versa), so the shape
+    # gets a vote of its own and a colour disagreement only lowers confidence.
+    # Four-colour decks (green clubs, blue diamonds) point at a single suit.
+    pref = _preferred_suits(g)
+    bonus = 0.15 if len(pref) == 1 else 0.10
+    best = None
+    for st in "cdhs":
+        label, score, _ = bank.match("suit", g.suit, st)
+        if label is None:
+            continue
+        adj = score + (bonus if st in pref else 0.0)
+        if best is None or adj > best[0]:
+            best = (adj, st, score)
+    if rank is None or best is None:
         return None
-    if not colour_ok:
+    _adj, suit, sscore = best
+    if suit not in pref:
         sscore -= 0.10
     # ambiguity penalty: a rank that is barely better than the runner-up is suspect
     margin = rscore - rsecond
     conf = min(rscore, sscore) - max(0.0, 0.08 - margin)
     return Card(rank, suit), float(conf)
+
 
 def snap_to_paper(warped: np.ndarray) -> np.ndarray:
     """Re-crop the warp to the bright paper area so the index sits at a

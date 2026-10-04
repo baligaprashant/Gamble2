@@ -126,3 +126,54 @@ def test_overlay_window_goes_to_roomier_side():
 
     assert suggest_window_pos(Region(0, 0, 800, 600), 1440)[0] >= 800  # video on the left
     assert suggest_window_pos(Region(700, 0, 700, 600), 1440)[0] == 0  # video on the right
+
+
+def _det(code, x, y, conf=0.95):
+    from gamble2.vision.base import CardRole, DetectedCard
+    from gamble2.vision.cards import Card
+
+    return DetectedCard(card=Card(code[0], code[1]), confidence=conf, bbox=(x, y, 48, 114), role=CardRole.HOLE)
+
+
+def test_rows_split_hole_cards_from_board():
+    from gamble2.state.layout import split_rows
+
+    dets = [_det("As", 255, 585), _det("Ac", 364, 586)] + [
+        _det(c, 250 + 113 * i, 793) for i, c in enumerate(["5c", "Kd", "9h", "Js", "7s"])
+    ]
+    hole, board = split_rows(dets)
+    assert [d.card.code for d in hole] == ["As", "Ac"]
+    assert [d.card.code for d in board] == ["5c", "Kd", "9h", "Js", "7s"]
+
+
+def test_overlay_in_screen_mode_reads_hand_and_board():
+    import numpy as np
+    from gamble2.ui.overlay import OverlayApp
+
+    dets = [_det("As", 255, 585), _det("Ac", 364, 586)] + [
+        _det(c, 250 + 113 * i, 793) for i, c in enumerate(["5c", "Kd", "9h", "Js", "7s"])
+    ]
+    frame = np.full((600, 800, 3), 90, np.uint8)
+    app = OverlayApp(lambda: frame, lambda f: dets, layout_rows=True)
+    for _ in range(8):
+        app.tick(frame.copy())
+    assert [c.code for c in app.state.hero] == ["As", "Ac"]
+    assert [c.code for c in app.state.board] == ["5c", "Kd", "9h", "Js", "7s"]
+    assert app._last_equity is not None and app._last_equity.win > 0.8
+
+
+def test_four_colour_tints():
+    import numpy as np
+    from gamble2.vision.index_finder import _Blob, _tint
+
+    def tint_of(bgr):
+        img = np.full((40, 40, 3), 245, np.uint8)
+        img[10:30, 10:30] = bgr
+        labels = np.zeros((40, 40), np.int32)
+        labels[10:30, 10:30] = 1
+        return _tint(img, labels, _Blob(10, 10, 20, 20, 400, 1))
+
+    assert tint_of((50, 120, 60)) == "green"
+    assert tint_of((190, 85, 65)) == "blue"
+    assert tint_of((35, 55, 160)) == "red"
+    assert tint_of((20, 20, 20)) == "black"

@@ -114,7 +114,8 @@ def _pairs_at(img: np.ndarray, scale: float, frac: float) -> list[IndexPair]:
                 suit_img = _glyph_image(labels, pip, _parts(pip), angle, upright, SUIT_SIZE)
                 if rank_img is None or suit_img is None:
                     continue
-                g = IndexGlyphs(rank_img, suit_img, _is_red(img, labels, pip), (0, 0, 0, 0), (0, 0, 0, 0))
+                tint = _tint(img, labels, pip)
+                g = IndexGlyphs(rank_img, suit_img, tint == "red", (0, 0, 0, 0), (0, 0, 0, 0), tint)
                 x = min(rk.x, pip.x)
                 y = min(rk.y, pip.y)
                 w = max(rk.x + rk.w, pip.x + pip.w) - x
@@ -241,6 +242,25 @@ def _parts(b: _Blob, blobs_by_label: dict[int, _Blob] | None = None) -> list[int
     code = -b.label - 1
     la, lb = divmod(code, 100000)
     return [la, lb]
+
+
+def _tint(img: np.ndarray, labels: np.ndarray, pip: _Blob) -> str:
+    """Ink colour family of a pip: red, black, or (four-colour decks) green / blue."""
+    m = labels[pip.y : pip.bottom, pip.x : pip.x + pip.w] == pip.label
+    patch = img[pip.y : pip.bottom, pip.x : pip.x + pip.w].astype(np.float32)
+    if int(m.sum()) < 6:
+        return "black"
+    px = patch[m]
+    dark = px.min(axis=1)
+    core = px[dark <= np.percentile(dark, 50)]  # the solid middle, not the blurry rim
+    b, g, r = (float(v) for v in core.mean(axis=0))
+    if g - max(r, b) > 20:
+        return "green"
+    if b - max(r, g) > 62:  # camera blue-cast black ink tops out around 60
+        return "blue"
+    # red ink has red well above green even in a dim, blue-tinted camera image
+    # (where r - max(b, g) is useless); black ink has r <= g.
+    return "red" if (r - g) > 8 else "black"
 
 
 def _is_red(img: np.ndarray, labels: np.ndarray, pip: _Blob) -> bool:
