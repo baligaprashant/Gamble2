@@ -79,20 +79,37 @@ def region_from_pixels(box: tuple[int, int, int, int], monitor: dict, shot_width
     )
 
 
+def list_displays() -> list[dict]:
+    """The real displays (mss numbers them from 1)."""
+    with mss.mss() as sct:
+        mons = list(sct.monitors[1:]) or [sct.monitors[0]]
+    return mons
+
+
 def select_region(monitor: int = 1) -> Region | None:
-    """Show a still screenshot of ``monitor``; the user clicks and drags a box
-    around the video, then presses ENTER.  ENTER without a box takes the whole
-    screen; ESC cancels (returns None)."""
+    """Show a still screenshot of a display; the user clicks and drags a box
+    around the video, then presses ENTER.  With several displays, TAB switches
+    between them.  ENTER without a box takes the whole display; ESC cancels
+    (returns None)."""
     import cv2
 
     with mss.mss() as sct:
-        mon = sct.monitors[monitor]
-        shot = np.array(sct.grab(mon))[:, :, :3].copy()
-    h, w = shot.shape[:2]
-    fit = min(1.0, 1400.0 / w, 800.0 / h)
-    view = cv2.resize(shot, None, fx=fit, fy=fit, interpolation=cv2.INTER_AREA) if fit < 1 else shot.copy()
+        mons = list(sct.monitors[1:]) or [sct.monitors[0]]
+        shots = [np.array(sct.grab(m))[:, :, :3].copy() for m in mons]
+    idx = min(max(monitor - 1, 0), len(mons) - 1)
     title = "Gamble2 - choose capture area"
     state = {"start": None, "end": None, "drag": False}
+
+    def fit_for(i: int) -> float:
+        h, w = shots[i].shape[:2]
+        return min(1.0, 1400.0 / w, 800.0 / h)
+
+    def view_for(i: int):
+        f = fit_for(i)
+        shot = shots[i]
+        return cv2.resize(shot, None, fx=f, fy=f, interpolation=cv2.INTER_AREA) if f < 1 else shot.copy()
+
+    views = [view_for(i) for i in range(len(mons))]
 
     def on_mouse(event, x, y, _flags, _param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -106,24 +123,31 @@ def select_region(monitor: int = 1) -> Region | None:
     cv2.setMouseCallback(title, on_mouse)
     result = None
     while True:
-        canvas = view.copy()
+        canvas = views[idx].copy()
         cv2.rectangle(canvas, (0, 0), (canvas.shape[1], 40), (30, 30, 30), -1)
-        cv2.putText(canvas, "CLICK AND DRAG a box around the video, then press ENTER   (ENTER alone = whole screen, ESC = cancel)",
-                    (10, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (80, 220, 255), 2, cv2.LINE_AA)
+        which = f"DISPLAY {idx + 1} of {len(mons)}  (TAB = other display)   " if len(mons) > 1 else ""
+        cv2.putText(canvas, which + "CLICK AND DRAG a box around the video, then ENTER  (ENTER alone = whole display, ESC = cancel)",
+                    (10, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (80, 220, 255), 1, cv2.LINE_AA)
         if state["start"] and state["end"]:
             cv2.rectangle(canvas, state["start"], state["end"], (0, 220, 0), 2)
         cv2.imshow(title, canvas)
         key = cv2.waitKey(30) & 0xFF
         if key == 27:
             break
+        if key == 9 and len(mons) > 1:  # TAB
+            idx = (idx + 1) % len(mons)
+            state.update(start=None, end=None, drag=False)
+            continue
         if key in (13, 10):
+            mon, w = mons[idx], shots[idx].shape[1]
             if state["start"] and state["end"]:
                 x0, y0 = state["start"]
                 x1, y1 = state["end"]
                 x, y = min(x0, x1), min(y0, y1)
                 bw, bh = abs(x1 - x0), abs(y1 - y0)
                 if bw >= 20 and bh >= 20:
-                    box = (int(x / fit), int(y / fit), int(bw / fit), int(bh / fit))
+                    f = fit_for(idx)
+                    box = (int(x / f), int(y / f), int(bw / f), int(bh / f))
                     result = region_from_pixels(box, mon, w)
                     break
                 # a stray click, not a box: ignore it and let them try again
@@ -136,13 +160,22 @@ def select_region(monitor: int = 1) -> Region | None:
     return result
 
 
-def suggest_window_pos(region: Region, screen_width: int) -> tuple[int, int]:
+def display_containing(region: Region, mons: list[dict]) -> dict:
+    """The display a region sits on (by its top-left corner)."""
+    for m in mons:
+        if m["left"] <= region.left < m["left"] + m["width"] and m["top"] <= region.top < m["top"] + m["height"]:
+            return m
+    return mons[0]
+
+
+def suggest_window_pos(region: Region, screen_width: int, origin_left: int = 0) -> tuple[int, int]:
     """Where to put our own window so it does not sit on top of the captured
-    area: on whichever side of it has more room."""
-    right_room = screen_width - (region.left + region.width)
-    if right_room >= region.left:
-        return (min(region.left + region.width + 10, max(0, screen_width - 200)), 40)
-    return (0, 40)
+    area: on whichever side of it has more room, on the same display."""
+    left_room = region.left - origin_left
+    right_room = origin_left + screen_width - (region.left + region.width)
+    if right_room >= left_room:
+        return (min(region.left + region.width + 10, origin_left + max(0, screen_width - 200)), 40)
+    return (origin_left, 40)
 
 
 def screen_capture_allowed(request: bool = False) -> bool | None:

@@ -177,3 +177,41 @@ def test_four_colour_tints():
     assert tint_of((190, 85, 65)) == "blue"
     assert tint_of((35, 55, 160)) == "red"
     assert tint_of((20, 20, 20)) == "black"
+
+
+def test_region_on_second_display():
+    from gamble2.capture.screen import Region, display_containing, suggest_window_pos
+
+    mons = [{"left": 0, "top": 0, "width": 1440, "height": 900}, {"left": 1440, "top": 0, "width": 1920, "height": 1080}]
+    r = Region(1577, 137, 685, 411)
+    assert display_containing(r, mons) is mons[1]
+    x, _y = suggest_window_pos(r, 1920, 1440)
+    assert x >= 1577 + 685  # beside the video, on the same display
+
+
+def test_duplicate_card_in_hand_and_board_does_not_crash():
+    import numpy as np
+    from gamble2.ui.overlay import OverlayApp
+
+    # the same card is (mis)read in the hole row and the board row
+    dets = [_det("As", 255, 585), _det("Ac", 364, 586)] + [
+        _det(c, 250 + 113 * i, 793) for i, c in enumerate(["As", "Kd", "9h", "Js", "7s"])
+    ]
+    frame = np.full((600, 800, 3), 90, np.uint8)
+    app = OverlayApp(lambda: frame, lambda f: dets, layout_rows=True)
+    for _ in range(10):
+        app.tick(frame.copy())  # must not raise
+    codes = [c.code for c in app.state.hero] + [c.code for c in app.state.board]
+    assert len(codes) == len(set(codes))
+
+
+def test_state_conflict_is_repaired_instead_of_raising():
+    import numpy as np
+    from gamble2.ui.overlay import OverlayApp
+    from gamble2.vision.cards import Card
+
+    app = OverlayApp(lambda: None, lambda f: [])
+    app.state.hero = [Card("A", "s"), Card("A", "c")]
+    app.state.board = [Card("A", "s"), Card("K", "d"), Card("9", "h")]
+    app._refresh_equity()  # raises ValueError internally; must be handled
+    assert {c.code for c in app.state.board}.isdisjoint({c.code for c in app.state.hero})

@@ -60,24 +60,55 @@ class OverlayApp:
         self._calib_best = None
         self._last_frame: np.ndarray | None = None
         self._empty_frames = 0
+        self._seen_errors: set = set()
 
     def run(self) -> None:
         cv2.namedWindow(self.window, cv2.WINDOW_NORMAL)
         if self.window_pos is not None:
             cv2.moveWindow(self.window, *self.window_pos)
+        last_display = None
         while True:
-            frame = self.read_frame()
+            try:
+                frame = self.read_frame()
+            except Exception as exc:  # a failed grab must not close the app
+                self._report_error("read_frame", exc)
+                frame = None
             self._last_frame = None if frame is None else frame.copy()
-            display = self.tick(frame)
+            try:
+                display = self.tick(frame)
+                last_display = display
+            except Exception as exc:  # keep running; show the last good picture
+                self._report_error("tick", exc)
+                display = last_display if last_display is not None else self._error_view(exc)
             cv2.imshow(self.window, display)
             cv2.resizeWindow(self.window, display.shape[1], display.shape[0])
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
-            self._handle_key(key)
+            try:
+                self._handle_key(key)
+            except Exception as exc:
+                self._report_error("key", exc)
 
         cv2.destroyWindow(self.window)
+
+    def _report_error(self, where: str, exc: Exception) -> None:
+        import sys
+        import traceback
+
+        sig = (where, type(exc).__name__, str(exc))
+        self._status = f"Error ({where}): {type(exc).__name__}: {exc}"[:90]
+        if sig not in self._seen_errors:  # print each distinct error once
+            self._seen_errors.add(sig)
+            print(f"\n[gamble2] recovered from an error in {where}:", file=sys.stderr)
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+
+    @staticmethod
+    def _error_view(exc: Exception) -> np.ndarray:
+        img = np.zeros((300, 800, 3), dtype=np.uint8)
+        cv2.putText(img, f"Error: {type(exc).__name__}: {exc}"[:90], (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        return img
 
     def tick(self, frame: np.ndarray | None) -> np.ndarray:
         if frame is None:
@@ -156,6 +187,13 @@ class OverlayApp:
         except FileNotFoundError as exc:
             self._status = str(exc)
             self._last_equity = None
+            return
+        except ValueError:
+            # e.g. the same card read in two places; drop the conflict and re-read
+            self._sanitize_state()
+            self._status = "Conflicting cards seen - re-reading"
+            self._last_equity = None
+            self._last_key = None
             return
         ms = (time.perf_counter() - t0) * 1000
         self._last_key = key
@@ -253,6 +291,24 @@ class OverlayApp:
                 else "Hold your 2 hole cards up to the camera (index corners visible)"
             )
             _ = seen
+        self._sanitize_state()
+
+    def _sanitize_state(self) -> None:
+        """Make hero / board / dealer consistent: no card in two places, and a legal
+        board size.  A misread must never be able to crash the equity calculation."""
+        st = self.state
+        used = {c.code for c in st.hero}
+        if len(used) != len(st.hero):
+            st.hero = []
+            used = set()
+        board = [c for c in st.board if c.code not in used]
+        if len({c.code for c in board}) != len(board) or len(board) not in (0, 3, 4, 5):
+            board = []
+        st.board = board
+        used |= {c.code for c in board}
+        st.dealer = [c for c in st.dealer if c.code not in used] if len({c.code for c in st.dealer}) == len(st.dealer) else []
+        if len(st.dealer) != 2:
+            st.dealer = []
 
     def _handle_key(self, key: int) -> None:
         if self._manual_mode:

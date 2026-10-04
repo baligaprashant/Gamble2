@@ -12,6 +12,8 @@ from gamble2.capture.screen import (
     Region,
     ScreenCapture,
     screen_capture_allowed,
+    display_containing,
+    list_displays,
     select_region,
     suggest_window_pos,
 )
@@ -104,11 +106,8 @@ def main(argv: list[str] | None = None) -> int:
     print("Keys: K calibrate to your deck  H hole  B board  D dealer  T teach one card  V debug  S save frame  C clear  Q quit")
     window_pos = None
     if not args.demo and args.source == "screen" and isinstance(source, ScreenCapture) and source.region is not None:
-        import mss
-
-        with mss.mss() as sct:
-            screen_w = sct.monitors[args.monitor]["width"]
-        window_pos = suggest_window_pos(source.region, screen_w)
+        mon = display_containing(source.region, list_displays())
+        window_pos = suggest_window_pos(source.region, mon["width"], mon["left"])
     app = OverlayApp(
         window_pos=window_pos,
         debug=(not args.demo and args.source == "screen"),
