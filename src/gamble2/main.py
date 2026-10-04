@@ -111,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         window_pos = suggest_window_pos(source.region, screen_w)
     app = OverlayApp(
         window_pos=window_pos,
+        debug=(not args.demo and args.source == "screen"),
         read_frame=source.read,
         detect=detector.detect,
         source_name=source.name,

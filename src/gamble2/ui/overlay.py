@@ -32,6 +32,7 @@ class OverlayApp:
         lock_frames: int = 4,
         detector: object | None = None,
         window_pos: tuple[int, int] | None = None,
+        debug: bool = False,
     ) -> None:
         self.window_pos = window_pos
         self.detector = detector  # optional: enables the debug view / teach mode
@@ -48,7 +49,7 @@ class OverlayApp:
         self._manual_mode: str | None = None
         self._prefer_manual = False
         self._last_seen = 0
-        self._debug = False
+        self._debug = debug
         self._calib: list[Card] | None = None
         self._calib_i = 0
         self._calib_hits = 0
@@ -96,10 +97,13 @@ class OverlayApp:
                 from gamble2.vision.template import annotate_candidates
 
                 annotate_candidates(frame, getattr(self.detector, "last_candidates", []))
-                for (x, y, w, h), card, conf in getattr(self.detector, "last_reads", []):
-                    cv2.rectangle(frame, (x - 3, y - 3), (x + w + 3, y + h + 3), (0, 140, 255), 1)
-                    cv2.putText(frame, f"{card.code} {conf:.2f}", (x + w + 6, y + 18),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 140, 255), 2, cv2.LINE_AA)
+                k = _scale(frame)
+                reads = getattr(self.detector, "last_reads", [])
+                for (x, y, w, h), card, conf in reads:
+                    cv2.rectangle(frame, (x - 3, y - 3), (x + w + 3, y + h + 3), (0, 140, 255), max(1, int(k)))
+                    cv2.putText(frame, f"{card.code} {conf:.2f}", (x + w + 6, y + int(18 * k)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6 * k, (0, 140, 255), max(1, int(2 * k)), cv2.LINE_AA)
+                self._draw_ribbon(frame, reads, detections)
             self._draw_detections(frame, detections)
             self._maybe_apply_detections(detections)
 
@@ -119,7 +123,12 @@ class OverlayApp:
             seeing=self._last_seen,
             manual_hint=hint,
         )
-        return compose_view(frame, panel)
+        view = compose_view(frame, panel)
+        vh = view.shape[0]
+        if vh > _MAX_VIEW_H:  # e.g. a Retina screen grab: keep the window on the display
+            f = _MAX_VIEW_H / float(vh)
+            view = cv2.resize(view, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+        return view
 
     def _state_key(self) -> tuple:
         return (
@@ -153,31 +162,51 @@ class OverlayApp:
     def _draw_detections(self, frame: np.ndarray, dets: list[DetectedCard]) -> None:
         for d in dets:
             x, y, w, h = d.bbox
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 200, 80), 2)
+            k = _scale(frame)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 200, 80), max(2, int(2 * k)))
             cv2.putText(
                 frame,
                 f"{d.card.code} {d.confidence:.2f}",
-                (x, max(20, y - 6)),
+                (x, max(int(20 * k), y - 6)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.6 * k,
                 (0, 200, 80),
-                2,
+                max(2, int(2 * k)),
                 cv2.LINE_AA,
             )
 
+    def _draw_ribbon(self, frame: np.ndarray, reads, dets: list[DetectedCard]) -> None:
+        """Top strip that says what the reader is seeing right now."""
+        h, w = frame.shape[:2]
+        k = _scale(frame)
+        top = sorted(reads, key=lambda r: -r[2])[:4]
+        if top:
+            guesses = "  ".join(f"{c.code} {conf:.2f}" for _b, c, conf in top)
+            line = f"corners {len(reads)} | {guesses}"
+        else:
+            line = "no card corners found - enlarge the video / pause on a sharp frame"
+        bar_h = int(34 * k)
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w, bar_h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        cv2.putText(frame, f"{w}x{h}  {line}", (int(10 * k), int(23 * k)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55 * k, (80, 220, 255), max(1, int(k)), cv2.LINE_AA)
+
     def _draw_camera_hint(self, frame: np.ndarray) -> None:
         h, w = frame.shape[:2]
+        k = _scale(frame)
+        bar = int(42 * k)
         overlay = frame.copy()
-        cv2.rectangle(overlay, (0, h - 42), (w, h), (20, 20, 20), -1)
+        cv2.rectangle(overlay, (0, h - bar), (w, h), (20, 20, 20), -1)
         cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
         cv2.putText(
             frame,
             "K calibrate  H hole  B board  D dealer  V debug  S save  C clear  Q quit",
-            (16, h - 14),
+            (int(16 * k), h - int(14 * k)),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
+            0.55 * k,
             (230, 230, 230),
-            1,
+            max(1, int(k)),
             cv2.LINE_AA,
         )
 
@@ -361,6 +390,14 @@ class OverlayApp:
             if saved
             else "No card found - hold it flat, index corner visible, then try again"
         )
+
+
+_MAX_VIEW_H = 820
+
+
+def _scale(frame: np.ndarray) -> float:
+    """Drawing scale so labels stay readable on big (e.g. Retina screen) frames."""
+    return max(1.0, frame.shape[0] / 540.0)
 
 
 def _best_hole_pair(dets: list[DetectedCard]) -> list[DetectedCard] | None:
