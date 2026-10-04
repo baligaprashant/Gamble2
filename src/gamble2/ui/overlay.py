@@ -31,7 +31,9 @@ class OverlayApp:
         window: str = "Gamble2",
         lock_frames: int = 4,
         detector: object | None = None,
+        window_pos: tuple[int, int] | None = None,
     ) -> None:
+        self.window_pos = window_pos
         self.detector = detector  # optional: enables the debug view / teach mode
         self.read_frame = read_frame
         self.detect = detect
@@ -56,6 +58,8 @@ class OverlayApp:
 
     def run(self) -> None:
         cv2.namedWindow(self.window, cv2.WINDOW_NORMAL)
+        if self.window_pos is not None:
+            cv2.moveWindow(self.window, *self.window_pos)
         while True:
             frame = self.read_frame()
             self._last_frame = None if frame is None else frame.copy()

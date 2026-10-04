@@ -119,3 +119,10 @@ def test_region_from_retina_pixels():
     assert (r.left, r.top, r.width, r.height) == (100, 50, 400, 300)
     r = region_from_pixels((200, 100, 800, 600), mon, shot_width=1440)  # 1x
     assert (r.left, r.top, r.width, r.height) == (200, 100, 800, 600)
+
+
+def test_overlay_window_goes_to_roomier_side():
+    from gamble2.capture.screen import Region, suggest_window_pos
+
+    assert suggest_window_pos(Region(0, 0, 800, 600), 1440)[0] >= 800  # video on the left
+    assert suggest_window_pos(Region(700, 0, 700, 600), 1440)[0] == 0  # video on the right

@@ -7,7 +7,7 @@ import sys
 
 from gamble2.capture.camera import CameraCapture
 from gamble2.capture.demo import DemoCapture
-from gamble2.capture.screen import Region, ScreenCapture, select_region
+from gamble2.capture.screen import Region, ScreenCapture, select_region, suggest_window_pos
 from gamble2.ui.overlay import OverlayApp
 from gamble2.vision.template import TemplateDetector
 
@@ -78,7 +78,15 @@ def main(argv: list[str] | None = None) -> int:
         detector = TemplateDetector()
     print(f"Card reader ready: {detector.bank.count()} reference glyphs loaded.")
     print("Keys: K calibrate to your deck  H hole  B board  D dealer  T teach one card  V debug  S save frame  C clear  Q quit")
+    window_pos = None
+    if not args.demo and args.source == "screen" and isinstance(source, ScreenCapture) and source.region is not None:
+        import mss
+
+        with mss.mss() as sct:
+            screen_w = sct.monitors[args.monitor]["width"]
+        window_pos = suggest_window_pos(source.region, screen_w)
     app = OverlayApp(
+        window_pos=window_pos,
         read_frame=source.read,
         detect=detector.detect,
         source_name=source.name,
